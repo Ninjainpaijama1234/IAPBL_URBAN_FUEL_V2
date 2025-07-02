@@ -127,17 +127,18 @@ tab_exp, tab_cls, tab_clu, tab_rules, tab_reg, tab_fcst = st.tabs(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Stage 2 – Exploratory Storytelling Gallery (final, readable)
+# Stage 2 – Exploratory Storytelling Gallery (stable version)
 # ─────────────────────────────────────────────────────────────
 with tab_exp:
-    import plotly.graph_objects as go  # for radar, etc.
+    import plotly.graph_objects as go  # radar & formatting
 
     st.subheader("Exploratory Storytelling Gallery")
 
-    # ── shared style helper ──────────────────────────────────
-    def style(fig: go.Figure, short_title: str) -> go.Figure:
+    # ---------- styling helper ----------
+    def style(fig: go.Figure, title: str) -> go.Figure:
+        """Apply consistent height, margins, and font size."""
         fig.update_layout(
-            title=short_title,
+            title=title,
             height=380,
             margin=dict(l=20, r=20, t=60, b=20),
             font=dict(size=13),
@@ -158,17 +159,17 @@ with tab_exp:
         "Income spread across cities")
     )
 
-    # 3. Commute vs dinners cooked (OLS trendline if possible)
+    # 3. Commute vs dinners cooked (trendline if statsmodels available)
     try:
         import statsmodels.api  # noqa: F401
-        scatter3 = px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week",
-                              color="city", trendline="ols")
-        title3 = "Commute time vs dinners cooked (OLS)"
+        fig3 = px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week",
+                          color="city", trendline="ols")
+        t3 = "Commute time vs dinners cooked (OLS)"
     except Exception:
-        scatter3 = px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week",
-                              color="city")
-        title3 = "Commute time vs dinners cooked"
-    charts.append(style(scatter3, title3))
+        fig3 = px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week",
+                          color="city")
+        t3 = "Commute time vs dinners cooked"
+    charts.append(style(fig3, t3))
 
     # 4. Dinner hour × health rating heat-map
     charts.append(style(
@@ -195,7 +196,7 @@ with tab_exp:
         "Outside-order frequency by gender")
     )
 
-    # 8. ★ Improved parallel categories (condensed, readable) ★
+    # 8. Parallel categories – condensed & bullet-proof
     def top_k(series: pd.Series, k: int = 4) -> pd.Series:
         top_vals = series.value_counts(dropna=False).nlargest(k).index
         return series.where(series.isin(top_vals), other="Other")
@@ -203,27 +204,25 @@ with tab_exp:
     def abbrev(label: str, n: int = 12) -> str:
         return (label[: n - 1] + "…") if len(label) > n else label
 
-    tmp = df.copy()
-    for col in ["dietary_goals", "favorite_cuisines", "meal_type_pref", "primary_cook"]:
-        tmp[col] = top_k(tmp[col], 4).astype(str).apply(abbrev)
+    pc = df.copy()
+    pc["diet_goal"] = top_k(pc["dietary_goals"], 4).astype(str).apply(abbrev)
+    pc["cuisine"]   = top_k(pc["favorite_cuisines"], 4).astype(str).apply(abbrev)
+    pc["meal_type"] = top_k(pc["meal_type_pref"], 4).astype(str).apply(abbrev)
+    pc["cook_role"] = top_k(pc["primary_cook"], 4).astype(str).apply(abbrev)
+    pc = pc[["diet_goal", "cuisine", "meal_type", "cook_role",
+             "healthy_importance_rating"]].dropna()
 
     par_fig = px.parallel_categories(
-        tmp,
-        dimensions=[
-            dict(label="Diet goal", values=tmp["dietary_goals"]),
-            dict(label="Cuisine", values=tmp["favorite_cuisines"]),
-            dict(label="Meal type", values=tmp["meal_type_pref"]),
-            dict(label="Cook role", values=tmp["primary_cook"]),
-        ],
+        pc,
+        dimensions=["diet_goal", "cuisine", "meal_type", "cook_role"],
         color="healthy_importance_rating",
         color_continuous_scale=px.colors.sequential.Viridis,
-        labels={"healthy_importance_rating": "Health ★"},
     )
     par_fig.update_layout(
+        title="Condensed journey: Diet → Cuisine → Meal-type → Cook role",
         height=600,
         margin=dict(l=30, r=30, t=60, b=30),
         font=dict(size=14),
-        title="Condensed journey: Diet → Cuisine → Meal-type → Cook role",
         coloraxis_colorbar=dict(title="Health score"),
     )
     charts.append(style(par_fig, "Diet → cuisine → meal-type → cook"))
@@ -255,7 +254,7 @@ with tab_exp:
         "Non-veg meals per week by city")
     )
 
-    # 13. Outside-meal spend vs age cohorts
+    # 13. Outside-meal spend by age cohort
     age_bins = pd.cut(df["age"], bins=range(15, 71, 5)).astype(str)
     charts.append(style(
         px.line(df.assign(age_bin=age_bins)
@@ -265,7 +264,7 @@ with tab_exp:
         "Outside-meal spend by age cohort")
     )
 
-    # 14. Health-importance distribution by gender
+    # 14. Health-importance distribution
     charts.append(style(
         px.histogram(df, x="healthy_importance_rating", color="gender", barmode="overlay"),
         "Health-importance distribution")
@@ -278,7 +277,7 @@ with tab_exp:
         "Cooking skill vs enjoyment")
     )
 
-    # 16. Stacked bar: payment mode vs city
+    # 16. Payment mode by city
     charts.append(style(
         px.histogram(df, x="payment_mode", color="city", barmode="stack"),
         "Payment mode by city")
@@ -294,9 +293,12 @@ with tab_exp:
         )
 
     # 18. Cumulative WTP by age
-    cum_df = df.sort_values("age").assign(cum_wtp=df["willing_to_pay_mealkit_inr"].cumsum())
-    charts.append(style(px.area(cum_df, x="age", y="cum_wtp"),
-                        "Cumulative WTP by age"))
+    cum_df = df.sort_values("age").assign(
+        cum_wtp=df["willing_to_pay_mealkit_inr"].cumsum())
+    charts.append(style(
+        px.area(cum_df, x="age", y="cum_wtp"),
+        "Cumulative WTP by age")
+    )
 
     # 19. Commute distribution animation
     charts.append(style(
@@ -307,14 +309,13 @@ with tab_exp:
 
     # 20. Scatter-matrix of core numerics
     charts.append(style(
-        px.scatter_matrix(df,
-                          dimensions=["age", "income_inr", "commute_minutes",
-                                      "work_hours_per_day"],
+        px.scatter_matrix(df, dimensions=["age", "income_inr",
+                                          "commute_minutes", "work_hours_per_day"],
                           color="gender"),
         "Scatter-matrix: core numerics")
     )
 
-    # ---------- Render 2-column grid ----------
+    # ---------- Render as 2-column grid ----------
     for i in range(0, len(charts), 2):
         cols = st.columns(2)
         for j, fig in enumerate(charts[i:i + 2]):
@@ -328,9 +329,10 @@ with tab_exp:
         st.write(
             "- Younger commuters have the lowest home-cooking frequency.\n"
             "- Mediterranean & South-Indian cuisines dominate high-health segments.\n"
-            "- ‘Time-poor diners’ cluster around 10-hour workdays and long commutes.\n"
+            "- “Time-poor diners” cluster around 10-hour workdays and long commutes.\n"
             "- Bundling low-carb kits with protein add-ons could unlock ₹10–15 crore."
         )
+
 
 
 with tab_cls:
