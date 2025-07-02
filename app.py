@@ -624,8 +624,7 @@ with tab_rules:
             "- ‘Protein-rich’ kits lift likelihood of repeat subscription by >2×."
         )
 # ─────────────────────────────────────────────────────────────
-# Stage 4B – Apriori Association-Rule Mining
-# (Paste this inside the `with tab_rules:` block)
+# Stage 4B – Apriori Association-Rule Mining  (safe keys)
 # ─────────────────────────────────────────────────────────────
 with tab_rules:
     from mlxtend.frequent_patterns import apriori, association_rules
@@ -634,56 +633,64 @@ with tab_rules:
 
     # ---------- column picker ----------
     cat_cols = df.select_dtypes(exclude="number").columns.tolist()
-    sel_cols = st.multiselect("Choose up to 3 categorical columns", cat_cols,
-                              default=cat_cols[:3])
+    sel_cols = st.multiselect(
+        "Choose up to 3 categorical columns",
+        cat_cols,
+        default=cat_cols[:3],
+        key="ar_cols",       # unique key
+    )
     if not sel_cols:
         st.info("Pick at least one column to mine.")
         st.stop()
     if len(sel_cols) > 3:
-        st.warning("Apriori limited to 3 columns; using the first three selected.")
+        st.warning("Only the first three selections will be used.")
         sel_cols = sel_cols[:3]
 
-    # ---------- thresholds ----------
+    # ---------- threshold sliders ----------
     col1, col2, col3 = st.columns(3)
     with col1:
-        min_sup = st.slider("Min support", 0.01, 0.3, 0.05, 0.01)
+        min_sup = st.slider("Min support", 0.01, 0.30, 0.05, 0.01, key="ar_sup")
     with col2:
-        min_conf = st.slider("Min confidence", 0.1, 1.0, 0.3, 0.05)
+        min_conf = st.slider("Min confidence", 0.10, 1.00, 0.30, 0.05, key="ar_conf")
     with col3:
-        min_lift = st.slider("Min lift", 1.0, 5.0, 1.2, 0.1)
+        min_lift = st.slider("Min lift", 1.0, 5.0, 1.2, 0.1, key="ar_lift")
 
-    # ---------- transaction encoding ----------
+    # ---------- Apriori pipeline ----------
     try:
-        # Create one-hot encoded basket
+        # One-hot encode selected columns
         trans = df[sel_cols].astype(str).apply(lambda s: s.name + "=" + s)
-        basket = pd.get_dummies(trans.stack()).groupby(level=0).sum().astype(bool)
+        basket = (
+            pd.get_dummies(trans.stack())
+            .groupby(level=0)
+            .sum()
+            .astype(bool)
+        )
 
-        # Frequent itemsets
         freq = apriori(basket, min_support=min_sup, use_colnames=True)
-
-        # Association rules
         rules = association_rules(freq, metric="confidence", min_threshold=min_conf)
         rules = rules[rules["lift"] >= min_lift]
 
         if rules.empty:
-            st.info("No rules meet the selected thresholds.")
+            st.info("No rules satisfy the current thresholds.")
         else:
-            show = (
+            top10 = (
                 rules.sort_values("confidence", ascending=False)
                      .head(10)
                      .reset_index(drop=True)[
                      ["antecedents", "consequents",
                       "support", "confidence", "lift"]]
             )
-            st.dataframe(show)
+            st.dataframe(top10)
+
     except Exception as e:
         st.error(f"❌ Rule mining failed: {e}")
 
     with st.expander("💡 Business Takeaways"):
         st.write(
-            "- Low-carb goal customers frequently choose digital payments.\n"
-            "- ‘Protein-rich’ kits raise repeat-subscription likelihood more than 2×."
+            "- Low-carb goal customers frequently choose digital payment modes.\n"
+            "- Selecting ‘Protein-rich’ kits raises repeat-subscription likelihood by >2×."
         )
+
 
 
 
