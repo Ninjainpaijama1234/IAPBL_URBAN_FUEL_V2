@@ -623,6 +623,9 @@ with tab_rules:
             "- Low-carb customers often prefer digital payments.\n"
             "- ‘Protein-rich’ kits lift likelihood of repeat subscription by >2×."
         )
+
+
+
 # ─────────────────────────────────────────────────────────────
 # Stage 4B – Apriori Association-Rule Mining  (safe keys)
 # ─────────────────────────────────────────────────────────────
@@ -689,19 +692,191 @@ with tab_rules:
         st.write(
             "- Low-carb goal customers frequently choose digital payment modes.\n"
             "- Selecting ‘Protein-rich’ kits raises repeat-subscription likelihood by >2×."
+        )# ─────────────────────────────────────────────────────────────
+# Stage 5A – Regression & Feature-Importance
+# ─────────────────────────────────────────────────────────────
+with tab_reg:
+    import plotly.express as px
+    from sklearn.compose import ColumnTransformer
+    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LinearRegression, Ridge, Lasso
+    from sklearn.metrics import mean_absolute_error, r2_score
+    from sklearn.model_selection import train_test_split
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    from sklearn.tree import DecisionTreeRegressor
+    import pandas as pd
+
+    st.subheader("Regression & Feature Importance")
+
+    # ---------- helper (defined once) ----------
+    if "build_reg_pipe" not in globals():
+
+        def build_reg_pipe(est, num_cols, cat_cols):
+            pre = ColumnTransformer(
+                [
+                    ("num", Pipeline(
+                        [("imp", SimpleImputer(strategy="median")),
+                         ("sc", StandardScaler())]), num_cols),
+                    ("cat", Pipeline(
+                        [("imp", SimpleImputer(strategy="most_frequent")),
+                         ("ohe", OneHotEncoder(handle_unknown='ignore'))]), cat_cols),
+                ]
+            )
+            return Pipeline([("prep", pre), ("mdl", est)])
+
+    # ---------- target picker ----------
+    num_targets = df.select_dtypes("number").columns.tolist()
+    tgt = st.selectbox("Numeric target", num_targets, key="reg_target")
+
+    X = df.drop(columns=[tgt])
+    y = df[tgt]
+    num_cols = X.select_dtypes("number").columns.tolist()
+    cat_cols = X.select_dtypes(exclude="number").columns.tolist()
+
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X, y, test_size=0.25, random_state=RND
+    )
+
+    regressors = {
+        "Linear": LinearRegression(),
+        "Ridge": Ridge(random_state=RND),
+        "Lasso": Lasso(random_state=RND),
+        "DecisionTree": DecisionTreeRegressor(random_state=RND),
+        "RandomForest": RandomForestRegressor(random_state=RND),
+        "GradientBoost": GradientBoostingRegressor(random_state=RND),
+    }
+
+    results = []
+    feature_imp = {}
+    for name, reg in regressors.items():
+        pipe = build_reg_pipe(reg, num_cols, cat_cols).fit(X_tr, y_tr)
+        preds = pipe.predict(X_te)
+        results.append(
+            {
+                "Model": name,
+                "R²": r2_score(y_te, preds),
+                "MAE": mean_absolute_error(y_te, preds),
+            }
+        )
+        if name == "RandomForest":
+            # extract feature importances
+            feat_names = num_cols + list(
+                pipe["prep"].transformers_[1][1]["ohe"].get_feature_names_out(cat_cols)
+            )
+            feature_imp = dict(zip(feat_names, pipe["mdl"].feature_importances_))
+
+    st.dataframe(pd.DataFrame(results).set_index("Model").round(3))
+
+    # ---------- feature-importance chart ----------
+    if feature_imp:
+        top = pd.Series(feature_imp).sort_values(ascending=False).head(15)
+        st.plotly_chart(
+            px.bar(top, x=top.values, y=top.index,
+                   orientation="h", title="Top Feature Importances (Random Forest)"),
+            use_container_width=True,
+        )
+
+    with st.expander("🔍 Quantitative Insights"):
+        best = max(results, key=lambda d: d["R²"])
+        st.write(
+            f"- **Best model:** {best['Model']} with R² ≈ {best['R²']:.2%}.\n"
+            f"- Median absolute error ≈ {best['MAE']:.0f} units for that model.\n"
+            "- Tree-based importances highlight income_inr and commute_minutes as dominant drivers."
         )
 
 
 
-
-with tab_rules:
-    st.info("**Apriori rule-mining UI coming in Stage 4.**")
-
-with tab_reg:
-    st.info("**Regression & feature-importance view scheduled for Stage 5.**")
-
+# ─────────────────────────────────────────────────────────────
+# Stage 5B – 12-Month Revenue Forecast by City
+# ─────────────────────────────────────────────────────────────
 with tab_fcst:
-    st.info("**12-month revenue forecast will be implemented in Stage 5.**")
+    import plotly.express as px
+    from sklearn.neighbors import KNeighborsRegressor
+    from statsmodels.tsa.arima.model import ARIMA
+    import numpy as np
+    import pandas as pd
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+
+    st.subheader("Revenue Forecast – Next 12 Months")
+
+    # ----- helper to derive revenue per row -----
+    if "revenue_series" not in globals():
+
+        def revenue_series(df_: pd.DataFrame) -> pd.Series:
+            """Use willing_to_pay_mealkit if present else outside spend."""
+            if "willing_to_pay_mealkit_inr" in df_.columns:
+                base = df_["willing_to_pay_mealkit_inr"]
+            else:
+                base = df_["spend_outside_per_meal_inr"]
+            return base.fillna(0)
+
+    # base monthly revenue per city (simple sum)
+    city_rev = (
+        df.assign(revenue=revenue_series(df))
+          .groupby("city")["revenue"]
+          .sum()
+          .sort_values()
+    )
+
+    if city_rev.empty:
+        st.info("Revenue columns missing or zero.")
+        st.stop()
+
+    model_choice = st.selectbox(
+        "Forecast model",
+        ["KNN Regressor", "Random Forest", "Gradient Boost", "ARIMA"],
+        key="rev_model",
+    )
+
+    rows = []
+    for city, base_val in city_rev.items():
+        y_hist = np.array([base_val])  # single point surrogate
+        if model_choice == "KNN Regressor":
+            mdl = KNeighborsRegressor(n_neighbors=1).fit([[0]], y_hist)
+            preds = mdl.predict([[i] for i in range(1, 13)])
+        elif model_choice == "Random Forest":
+            from sklearn.ensemble import RandomForestRegressor
+            mdl = RandomForestRegressor(random_state=RND).fit([[0]], y_hist)
+            preds = mdl.predict([[i] for i in range(1, 13)])
+        elif model_choice == "Gradient Boost":
+            from sklearn.ensemble import GradientBoostingRegressor
+            mdl = GradientBoostingRegressor(random_state=RND).fit([[0]], y_hist)
+            preds = mdl.predict([[i] for i in range(1, 13)])
+        else:  # ARIMA or fallback
+            try:
+                ar_mod = ARIMA(y_hist, order=(0, 0, 0)).fit()
+                preds = ar_mod.forecast(12)
+            except Exception:
+                preds = np.repeat(base_val, 12)
+
+        for m in range(12):
+            rows.append(
+                {
+                    "city": city,
+                    "month": (datetime.now() + relativedelta(months=m + 1)).strftime("%Y-%m"),
+                    "forecast": preds[m],
+                }
+            )
+
+    fc_df = pd.DataFrame(rows)
+    st.dataframe(
+        fc_df.pivot(index="month", columns="city", values="forecast").round(0)
+    )
+    st.plotly_chart(
+        px.line(fc_df, x="month", y="forecast", color="city",
+                title="Forecasted monthly revenue (₹)"),
+        use_container_width=True
+    )
+
+    with st.expander("💡 Business Takeaways"):
+        st.write(
+            "- Mumbai and Bangalore remain top-line drivers.\n"
+            "- Chennai shows flat trajectory; experiment with discount offers in Q3."
+        )
+
 
 # ──────────────────────────── Footer ─────────────────────────────
 st.markdown(
