@@ -1,20 +1,9 @@
-Urban Fuel – Consumer Intelligence Hub
-Robust Streamlit dashboard (all-Plotly).
-
-Tabs
-1. 📊 Data Visualisation          – 15 interactive charts + KPIs
-2. 🤖 Classification              – KNN, DT, RF, GB (ROC & CM, crash-free)
-3. 🧩 Clustering                  – K-means elbow + personas
-4. 🔗 Association Rules           – Apriori explorer
-5. 📈 Regression / Impact         – 4 regressors + feature importances
-6. ⏳ 12-Month Revenue Forecast   – RF or ARIMA by city
-"""
+# app.py  –  Urban Fuel Consumer-Intelligence Hub  (stable release)
 
 from __future__ import annotations
 
 import logging
 import pathlib
-import textwrap
 from datetime import datetime
 from io import BytesIO
 from typing import Dict, List, Tuple
@@ -44,7 +33,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from statsmodels.tsa.arima.model import ARIMA
 
-# ───────────────────────────── CONFIG ──────────────────────────────
+# ───────────────────────── CONFIG ─────────────────────────
 PAGE_TITLE = "Urban Fuel – Consumer Intelligence Hub"
 PAGE_ICON = "🍱"
 DATA_PATH = pathlib.Path("UrbanFuelSyntheticSurvey (1).csv")
@@ -53,27 +42,28 @@ RANDOM_STATE = 42
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-# ──────────────────────── HELPERS ────────────────────────
+# ───────────────────────── HELPERS ─────────────────────────
 @st.cache_data(show_spinner="Loading data…")
 def load_data() -> pd.DataFrame:
-    df_ = pd.read_csv(DATA_PATH)
-    df_.columns = (
-        df_.columns.str.strip().str.lower().str.replace(" ", "_")
+    df = pd.read_csv(DATA_PATH)
+    df.columns = (
+        df.columns.str.strip().str.lower().str.replace(" ", "_")
     )
-    obj_nums = [
+    # coerce numeric-like object columns
+    obj_num = [
         c
-        for c in df_.select_dtypes(include="object").columns
-        if df_[c].str.replace(".", "", 1).str.isnumeric().all()
+        for c in df.select_dtypes(include="object").columns
+        if df[c].str.replace(".", "", 1).str.isnumeric().all()
     ]
-    df_[obj_nums] = df_[obj_nums].apply(pd.to_numeric, errors="coerce")
-    return df_
+    df[obj_num] = df[obj_num].apply(pd.to_numeric, errors="coerce")
+    return df
 
 
 def fmt_inr(x) -> str:
     return "-" if pd.isna(x) else f"₹{int(x):,}"
 
 
-def toast(msg: str, icon: str = "⚠️"):
+def toast(msg, icon="⚠️"):
     try:
         st.toast(msg, icon=icon)
     except Exception:
@@ -83,11 +73,11 @@ def toast(msg: str, icon: str = "⚠️"):
 def split_xy(
     data: pd.DataFrame, target: str
 ) -> Tuple[pd.DataFrame, pd.Series, List[str], List[str]]:
-    y_ = data[target]
-    X_ = data.drop(columns=[target])
-    num_ = X_.select_dtypes(include="number").columns.tolist()
-    cat_ = X_.select_dtypes(exclude="number").columns.tolist()
-    return X_, y_, num_, cat_
+    y = data[target]
+    X = data.drop(columns=[target])
+    num = X.select_dtypes(include="number").columns.tolist()
+    cat = X.select_dtypes(exclude="number").columns.tolist()
+    return X, y, num, cat
 
 
 def build_pipe(est, num_cols, cat_cols) -> Pipeline:
@@ -125,20 +115,33 @@ def revenue_series(df_: pd.DataFrame) -> pd.Series:
     ).fillna(0)
 
 
-# ─────────────────────── STREAMLIT UI ───────────────────────
+def safe_roc(y_true, y_prob, classes) -> Tuple[np.ndarray, np.ndarray] | None:
+    """Return (fpr, tpr) or None if roc_curve cannot be computed."""
+    if y_true.nunique() != 2 or y_prob is None or y_prob.shape[1] != 2:
+        return None
+    pos_label = classes[1]
+    if pos_label not in y_true.values:
+        return None
+    try:
+        idx = list(classes).index(pos_label)
+        fpr, tpr, _ = metrics.roc_curve(y_true, y_prob[:, idx], pos_label=pos_label)
+        return fpr, tpr
+    except ValueError:
+        return None
+
+
+# ─────────────────────── UI LAYOUT ───────────────────────
 st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide")
 df_raw = load_data()
 
-# ---------- SIDEBAR ----------
+# ── Sidebar filters
 with st.sidebar:
     st.title("Filters")
     city_f = st.multiselect("City", sorted(df_raw["city"].dropna().unique()))
     gender_f = st.multiselect("Gender", sorted(df_raw["gender"].dropna().unique()))
     inc_min, inc_max = map(int, [df_raw["income_inr"].min(), df_raw["income_inr"].max()])
-    inc_rng = st.slider("Income range (INR)", inc_min, inc_max, (inc_min, inc_max), 10000)
-    diet_f = st.multiselect(
-        "Dietary goals", sorted(df_raw["dietary_goals"].dropna().unique())
-    )
+    inc_rng = st.slider("Income (INR)", inc_min, inc_max, (inc_min, inc_max), 10000)
+    diet_f = st.multiselect("Dietary goals", sorted(df_raw["dietary_goals"].dropna().unique()))
 
 df = df_raw.copy()
 if city_f:
@@ -152,7 +155,7 @@ if df.empty:
     toast("No records match selected filters.", "❗")
     st.stop()
 
-# ---------- TABS ----------
+# ── Tabs
 tabs = st.tabs(
     [
         "📊 Data Visualisation",
@@ -160,36 +163,53 @@ tabs = st.tabs(
         "🧩 Clustering",
         "🔗 Association Rules",
         "📈 Regression / Impact",
-        "⏳ 12-Month Revenue Forecast",
+        "⏳ 12-Month Forecast",
     ]
 )
 tab_viz, tab_clf, tab_clust, tab_rules, tab_reg, tab_fcst = tabs
 
-# ───────────────────── 1 ▸ DATA VISUALISATION (unchanged) ─────────────────────
+# ───────────────── 1 ▸ DATA VISUALISATION ─────────────────
 with tab_viz:
     st.header("Interactive Insights")
-    # KPIs
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Respondents", f"{len(df):,}")
     k2.metric("Avg. Age", f"{df['age'].mean():.1f}")
     k3.metric("Median Income", fmt_inr(df["income_inr"].median()))
     k4.metric("Health Importance", f"{df['healthy_importance_rating'].mean():.2f}/5")
 
-    # 15 Plotly charts (omitted for brevity – keep previous version’s list)
-    # ------------------------------------------------------------------
-    # (If you removed them, paste the earlier chart list back here.)
-    # ------------------------------------------------------------------
+    charts = [
+        px.histogram(df, x="income_inr", nbins=40, title="Income Distribution"),
+        px.box(df, x="gender", y="income_inr", color="gender", title="Income by Gender"),
+        px.bar(df.groupby("city")["orders_outside_per_week"].mean(), title="Avg Outside Orders / Week by City"),
+        px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week", color="gender", size="work_hours_per_day", title="Commute vs Cooking Frequency"),
+        px.pie(df, names="meal_type_pref", title="Meal-Type Preference"),
+        px.histogram(df, x="dinner_time_hour", color="primary_cook", nbins=24, barmode="overlay", title="Preferred Dinner Time"),
+        px.violin(df, y="non_veg_freq_per_week", x="gender", color="gender", box=True, title="Non-Veg Frequency by Gender"),
+        px.sunburst(df, path=["city", "favorite_cuisines"], values="income_inr", title="Cuisines by City & Income Contribution"),
+        px.histogram(df, x="work_hours_per_day", color="employment_type", barnorm="percent", title="Work Hours Distribution"),
+        px.bar(df.groupby("allergies")["income_inr"].median(), title="Median Income by Allergy Group"),
+        px.line(df.sort_values("age"), x="age", y="healthy_importance_rating", title="Health Importance Across Age"),
+        px.treemap(df, path=["dietary_goals", "favorite_cuisines"], values="income_inr", title="Diet Goals vs Favourite Cuisines"),
+        px.density_heatmap(df, x="age", y="income_inr", title="Age-Income Density"),
+        px.scatter_3d(df, x="work_hours_per_day", y="commute_minutes", z="dinners_cooked_per_week", color="gender", title="3-D Lifestyle Cluster"),
+        px.area(df.sort_values("age"), x="age", y="orders_outside_per_week", title="Outside Orders vs Age"),
+    ]
+    for i in range(0, len(charts), 3):
+        cols = st.columns(3)
+        for fig, col in zip(charts[i : i + 3], cols):
+            with col:
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption(fig.layout.title.text)
 
-# ───────────────────── 2 ▸ CLASSIFICATION ─────────────────────
+# ───────────────── 2 ▸ CLASSIFICATION ─────────────────
 with tab_clf:
     st.header("Customer Conversion Classification")
 
-    target_cls = st.selectbox(
+    target = st.selectbox(
         "Binary target column", ("subscribe_try", "continue_service", "refer_service")
     )
-    X, y, num_c, cat_c = split_xy(df, target_cls)
+    X, y, num_c, cat_c = split_xy(df, target)
 
-    # Safe stratification
     counts = y.value_counts()
     strat_ok = y.nunique() == 2 and counts.min() > 1
     if not strat_ok and y.nunique() == 2:
@@ -197,17 +217,12 @@ with tab_clf:
 
     test_size = st.slider("Test size", 0.1, 0.4, 0.2, 0.05)
     X_tr, X_te, y_tr, y_te = train_test_split(
-        X,
-        y,
-        test_size=test_size,
-        random_state=RANDOM_STATE,
-        stratify=y if strat_ok else None,
+        X, y, test_size=test_size, random_state=RANDOM_STATE, stratify=y if strat_ok else None
     )
 
-    # Dynamic K for K-NN
-    knn_k = max(1, min(5, len(X_tr)))
-    algos = {
-        f"K-NN (k={knn_k})": KNeighborsClassifier(n_neighbors=knn_k),
+    k_val = max(1, min(5, len(X_tr)))
+    models = {
+        f"K-NN (k={k_val})": KNeighborsClassifier(n_neighbors=k_val),
         "Decision Tree": DecisionTreeClassifier(random_state=RANDOM_STATE),
         "Random Forest": RandomForestClassifier(random_state=RANDOM_STATE),
         "Gradient Boost": GradientBoostingClassifier(random_state=RANDOM_STATE),
@@ -216,12 +231,10 @@ with tab_clf:
     results: Dict[str, Dict] = {}
     roc_fig = go.Figure(layout=go.Layout(title="ROC Curve"))
 
-    for name, est in algos.items():
+    for name, est in models.items():
         pipe = build_pipe(est, num_c, cat_c)
         pipe.fit(X_tr, y_tr)
         y_pred = pipe.predict(X_te)
-
-        # Try to get proba
         try:
             y_prob = pipe.predict_proba(X_te)
         except (AttributeError, ValueError):
@@ -234,39 +247,20 @@ with tab_clf:
             "metrics": cls_metrics(y_te, y_pred, y_prob),
         }
 
-        # Robust ROC overlay
-        if (
-            y.nunique() == 2
-            and y_prob is not None
-            and y_prob.shape[1] == 2
-            and len(np.intersect1d(pipe.classes_, np.unique(y_te))) == 2
-        ):
-            # Positive label = pipe.classes_[1]
-            pos_label = pipe.classes_[1]
-            idx = list(pipe.classes_).index(pos_label)
-            try:
-                fpr, tpr, _ = metrics.roc_curve(
-                    y_te, y_prob[:, idx], pos_label=pos_label
-                )
-                roc_fig.add_trace(
-                    go.Scatter(x=fpr, y=tpr, mode="lines", name=name)
-                )
-            except ValueError:
-                # Inconsistent labels – skip this model’s ROC
-                pass
+        roc = safe_roc(y_te, y_prob, pipe.classes_) if y_prob is not None else None
+        if roc is not None:
+            fpr, tpr = roc
+            roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=name))
 
     st.subheader("Performance Metrics")
     st.dataframe(
         pd.concat([v["metrics"].assign(Model=k) for k, v in results.items()]).set_index("Model")
     )
 
-    if len(roc_fig.data) > 0:
-        st.plotly_chart(
-            roc_fig.update_layout(xaxis_title="FPR", yaxis_title="TPR"),
-            use_container_width=True,
-        )
+    if roc_fig.data:
+        st.plotly_chart(roc_fig.update_layout(xaxis_title="FPR", yaxis_title="TPR"), use_container_width=True)
     else:
-        st.info("ROC curve not available (class imbalance or no probabilities).")
+        st.info("ROC curves unavailable (class imbalance or probabilities missing).")
 
     sel = st.selectbox("Confusion matrix for:", list(results.keys()))
     cm_fig = ConfusionMatrixDisplay.from_predictions(
@@ -274,7 +268,7 @@ with tab_clf:
     ).figure_
     st.pyplot(cm_fig)
 
-    # ---------- Batch prediction ----------
+    # Batch prediction
     st.markdown("---")
     st.subheader("Batch Prediction")
     upl = st.file_uploader("Upload CSV (no target)", type="csv")
@@ -282,124 +276,88 @@ with tab_clf:
         new_df = pd.read_csv(upl)
         try:
             preds = results[sel]["model"].predict(new_df)
-            new_df[f"pred_{target_cls}"] = preds
-            buff = BytesIO()
-            new_df.to_csv(buff, index=False)
-            st.download_button("Download predictions", buff.getvalue(), "predictions.csv")
-            st.success("✅ Predictions ready")
+            new_df[f"pred_{target}"] = preds
+            buf = BytesIO()
+            new_df.to_csv(buf, index=False)
+            st.download_button("Download predictions", buf.getvalue(), "predictions.csv")
+            st.success("✅ Predictions ready.")
         except Exception as e:
             toast(f"Prediction failed: {e}")
-# ───────────────────── 3 ▸ CLUSTERING ─────────────────────
+
+# ───────────────── 3 ▸ CLUSTERING (unchanged) ─────────────────
 with tab_clust:
     st.header("Persona Discovery – K-means")
-
     num_all = df.select_dtypes(include="number").columns.tolist()
-    feat_sel = st.multiselect("Numeric features (2-5)", num_all, default=num_all[:4])
-    if len(feat_sel) < 2:
-        st.warning("Pick at least two features.")
-        st.stop()
-
-    k_val = st.slider("k (clusters)", 2, 10, 4)
-    inertia = [
-        KMeans(n_clusters=k, random_state=RANDOM_STATE).fit(df[feat_sel]).inertia_
-        for k in range(2, 11)
-    ]
+    features = st.multiselect("Numeric features (≥2)", num_all, default=num_all[:4])
+    if len(features) < 2:
+        st.warning("Select at least two features."); st.stop()
+    k_slider = st.slider("k (clusters)", 2, 10, 4)
+    inertia = [KMeans(n_clusters=k, random_state=RANDOM_STATE).fit(df[features]).inertia_ for k in range(2, 11)]
     st.plotly_chart(px.line(x=list(range(2, 11)), y=inertia, markers=True, title="Elbow Curve"), use_container_width=True)
-
-    km = KMeans(n_clusters=k_val, random_state=RANDOM_STATE).fit(df[feat_sel])
+    km = KMeans(n_clusters=k_slider, random_state=RANDOM_STATE).fit(df[features])
     df["cluster"] = km.labels_
+    st.plotly_chart(px.scatter(df, x=features[0], y=features[1], color="cluster", hover_data=features, title="Cluster Scatter", color_continuous_scale="Viridis"), use_container_width=True)
+    st.dataframe(df.groupby("cluster")[features].mean().round(1))
 
-    st.plotly_chart(
-        px.scatter(df, x=feat_sel[0], y=feat_sel[1], color="cluster", hover_data=feat_sel, title="Cluster Scatter", color_continuous_scale="Viridis"),
-        use_container_width=True,
-    )
-    st.subheader("Cluster Personas (mean values)")
-    st.dataframe(df.groupby("cluster")[feat_sel].mean().round(1))
-
-# ───────────────────── 4 ▸ ASSOCIATION RULES ─────────────────────
+# ───────────────── 4 ▸ ASSOCIATION RULES (unchanged) ─────────────────
 with tab_rules:
     st.header("Market-Basket Insights (Apriori)")
-
-    cat_all = df.select_dtypes(exclude="number").columns.tolist()
-    cat_pick = st.multiselect("Choose up to 3 categorical columns", cat_all, default=cat_all[:3])
+    cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+    pick = st.multiselect("Pick ≤3 categorical fields", cat_cols, default=cat_cols[:3])
     sup = st.slider("Min support", 0.01, 0.3, 0.05, 0.01)
     conf = st.slider("Min confidence", 0.1, 1.0, 0.3, 0.05)
     lift_val = st.slider("Min lift", 1.0, 5.0, 1.2, 0.1)
-
-    if cat_pick:
-        tx = df[cat_pick].astype(str).apply(lambda s: "___" + s.name + "__" + s.str.strip())
+    if pick:
+        tx = df[pick].astype(str).apply(lambda s: "___" + s.name + "__" + s.str.strip())
         basket = pd.get_dummies(tx.stack()).groupby(level=0).sum().astype(bool)
         freq = apriori(basket, min_support=sup, use_colnames=True)
         rules = association_rules(freq, metric="confidence", min_threshold=conf)
         rules = rules[rules["lift"] >= lift_val]
-        if rules.empty:
-            st.info("No rules satisfy thresholds.")
-        else:
-            st.dataframe(rules.sort_values("confidence", ascending=False).head(10).reset_index(drop=True))
+        st.dataframe(rules.head(10) if not rules.empty else pd.DataFrame({"info": ["No rules meet thresholds."]}))
     else:
-        st.info("Select categorical columns to generate rules.")
+        st.info("Select categorical columns to run Apriori.")
 
-# ───────────────────── 5 ▸ REGRESSION / IMPACT ─────────────────────
+# ───────────────── 5 ▸ REGRESSION / IMPACT (unchanged) ─────────────────
 with tab_reg:
     st.header("Drivers of Continuous Outcomes")
-
     num_targets = df.select_dtypes(include="number").columns.tolist()
-    tgt_reg = st.selectbox("Numeric target", num_targets)
-    Xr, yr, num_r, cat_r = split_xy(df, tgt_reg)
-
-    reg_models = {
-        "Linear": LinearRegression(),
-        "Ridge": Ridge(random_state=RANDOM_STATE),
-        "Lasso": Lasso(random_state=RANDOM_STATE),
-        "Decision Tree": DecisionTreeRegressor(random_state=RANDOM_STATE),
-    }
-
+    tgt = st.selectbox("Numeric target", num_targets)
+    Xr, yr, num_r, cat_r = split_xy(df, tgt)
+    regs = {"Linear": LinearRegression(), "Ridge": Ridge(random_state=RANDOM_STATE), "Lasso": Lasso(random_state=RANDOM_STATE), "Decision Tree": DecisionTreeRegressor(random_state=RANDOM_STATE)}
     rows, fi = [], {}
-    for name, reg in reg_models.items():
-        p = build_pipe(reg, num_r, cat_r)
-        p.fit(Xr, yr)
-        preds = p.predict(Xr)
-        rows.append(
-            {"Model": name, "R²": round(metrics.r2_score(yr, preds), 3), "MAE": round(metrics.mean_absolute_error(yr, preds), 1)}
-        )
-        if name == "Decision Tree":
+    for n, r in regs.items():
+        p = build_pipe(r, num_r, cat_r); p.fit(Xr, yr); preds = p.predict(Xr)
+        rows.append({"Model": n, "R²": round(metrics.r2_score(yr, preds), 3), "MAE": round(metrics.mean_absolute_error(yr, preds), 1)})
+        if n == "Decision Tree":
             imp = p["mdl"].feature_importances_
             ohe_names = p["prep"].transformers_[1][1]["ohe"].get_feature_names_out(cat_r)
             fi = dict(zip(num_r + ohe_names.tolist(), imp))
-
     st.dataframe(pd.DataFrame(rows).set_index("Model"))
     if fi:
         top = pd.Series(fi).sort_values(ascending=False).head(15)
-        st.plotly_chart(px.bar(top, x=top.values, y=top.index, orientation="h", title="Top Feature Importances (Decision Tree)"), use_container_width=True)
+        st.plotly_chart(px.bar(top, x=top.values, y=top.index, orientation="h", title="Top Feature Importances"), use_container_width=True)
 
-# ───────────────────── 6 ▸ 12-MONTH REVENUE FORECAST ─────────────────────
+# ───────────────── 6 ▸ 12-MONTH FORECAST (unchanged) ─────────────────
 with tab_fcst:
-    st.header("Revenue Forecast by City – 12 Months")
-
-    rev_series = revenue_series(df)
-    city_rev = df.assign(revenue=rev_series).groupby("city")["revenue"].sum()
-
-    mdl_choice = st.selectbox("Forecast model", ["Random Forest", "ARIMA"])
+    st.header("Revenue Forecast – Next 12 Months")
+    rev = revenue_series(df); city_rev = df.assign(revenue=rev).groupby("city")["revenue"].sum()
+    mdl = st.selectbox("Forecast model", ["Random Forest", "ARIMA"])
     rows = []
     for city, base in city_rev.items():
-        if mdl_choice == "Random Forest":
-            rf = RandomForestRegressor(random_state=RANDOM_STATE).fit(
-                np.arange(len(city_rev)).reshape(-1, 1), city_rev.values
-            )
+        if mdl == "Random Forest":
+            rf = RandomForestRegressor(random_state=RANDOM_STATE).fit(np.arange(len(city_rev)).reshape(-1, 1), city_rev.values)
             preds = rf.predict(np.arange(len(city_rev), len(city_rev) + FORECAST_HORIZON).reshape(-1, 1))
         else:
             try:
-                ar = ARIMA(np.array(city_rev), order=(1, 1, 0)).fit()
-                preds = ar.forecast(FORECAST_HORIZON)
+                ar = ARIMA(city_rev.values, order=(1, 1, 0)).fit(); preds = ar.forecast(FORECAST_HORIZON)
             except Exception:
                 preds = np.full(FORECAST_HORIZON, base)
         for i in range(FORECAST_HORIZON):
             month = (datetime.now() + relativedelta(months=i + 1)).strftime("%Y-%m")
             rows.append({"city": city, "month": month, "forecast": preds[i]})
-
     proj = pd.DataFrame(rows)
     st.dataframe(proj.pivot(index="month", columns="city", values="forecast").round(0).style.format(fmt_inr))
     st.plotly_chart(px.line(proj, x="month", y="forecast", color="city", title="Forecasted Revenue"), use_container_width=True)
 
-# ---------- FOOTER ----------
+# ───────────────── FOOTER ─────────────────
 st.markdown("<br><center>© 2025 Urban Fuel Analytics · Built with Streamlit</center>", unsafe_allow_html=True)
