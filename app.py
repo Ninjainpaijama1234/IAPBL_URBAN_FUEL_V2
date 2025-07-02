@@ -623,6 +623,68 @@ with tab_rules:
             "- Low-carb customers often prefer digital payments.\n"
             "- ‘Protein-rich’ kits lift likelihood of repeat subscription by >2×."
         )
+# ─────────────────────────────────────────────────────────────
+# Stage 4B – Apriori Association-Rule Mining
+# (Paste this inside the `with tab_rules:` block)
+# ─────────────────────────────────────────────────────────────
+with tab_rules:
+    from mlxtend.frequent_patterns import apriori, association_rules
+
+    st.subheader("Apriori Association-Rules")
+
+    # ---------- column picker ----------
+    cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+    sel_cols = st.multiselect("Choose up to 3 categorical columns", cat_cols,
+                              default=cat_cols[:3])
+    if not sel_cols:
+        st.info("Pick at least one column to mine.")
+        st.stop()
+    if len(sel_cols) > 3:
+        st.warning("Apriori limited to 3 columns; using the first three selected.")
+        sel_cols = sel_cols[:3]
+
+    # ---------- thresholds ----------
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_sup = st.slider("Min support", 0.01, 0.3, 0.05, 0.01)
+    with col2:
+        min_conf = st.slider("Min confidence", 0.1, 1.0, 0.3, 0.05)
+    with col3:
+        min_lift = st.slider("Min lift", 1.0, 5.0, 1.2, 0.1)
+
+    # ---------- transaction encoding ----------
+    try:
+        # Create one-hot encoded basket
+        trans = df[sel_cols].astype(str).apply(lambda s: s.name + "=" + s)
+        basket = pd.get_dummies(trans.stack()).groupby(level=0).sum().astype(bool)
+
+        # Frequent itemsets
+        freq = apriori(basket, min_support=min_sup, use_colnames=True)
+
+        # Association rules
+        rules = association_rules(freq, metric="confidence", min_threshold=min_conf)
+        rules = rules[rules["lift"] >= min_lift]
+
+        if rules.empty:
+            st.info("No rules meet the selected thresholds.")
+        else:
+            show = (
+                rules.sort_values("confidence", ascending=False)
+                     .head(10)
+                     .reset_index(drop=True)[
+                     ["antecedents", "consequents",
+                      "support", "confidence", "lift"]]
+            )
+            st.dataframe(show)
+    except Exception as e:
+        st.error(f"❌ Rule mining failed: {e}")
+
+    with st.expander("💡 Business Takeaways"):
+        st.write(
+            "- Low-carb goal customers frequently choose digital payments.\n"
+            "- ‘Protein-rich’ kits raise repeat-subscription likelihood more than 2×."
+        )
+
 
 
 with tab_rules:
