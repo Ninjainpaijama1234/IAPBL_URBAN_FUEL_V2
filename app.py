@@ -130,127 +130,195 @@ tab_exp, tab_cls, tab_clu, tab_rules, tab_reg, tab_fcst = st.tabs(
 # Stage 2: Data-exploration gallery (20 visuals + takeaways)
 # ─────────────────────────────────────────────────────────────
 with tab_exp:
+    import plotly.graph_objects as go  # needed for radar chart
+
     st.subheader("Exploratory Storytelling Gallery")
 
-    # ---------- Figure factory ----------
     charts: list[go.Figure] = []
 
     # 1. Age distribution by gender
     charts.append(
-        px.histogram(df, x="age", color="gender", nbins=30, barmode="overlay",
-                     title="Age distribution by gender")
+        px.histogram(
+            df, x="age", color="gender", nbins=30, barmode="overlay",
+            title="Age distribution by gender"
+        )
     )
+
     # 2. Income distribution by city
     charts.append(
-        px.box(df, x="city", y="income_inr", color="city",
-               title="Income spread across cities")
+        px.box(
+            df, x="city", y="income_inr", color="city",
+            title="Income spread across cities"
+        )
     )
-    # 3. Commute vs. dinners cooked
-    charts.append(
-        px.scatter(df, x="commute_minutes", y="dinners_cooked_per_week",
-                   color="city", trendline="ols",
-                   title="Does commute time hurt home-cooking frequency?")
-    )
+
+    # 3. Commute vs. dinners cooked (trendline only if statsmodels+scipy present)
+    try:
+        import statsmodels.api  # noqa: F401
+        charts.append(
+            px.scatter(
+                df, x="commute_minutes", y="dinners_cooked_per_week",
+                color="city", trendline="ols",
+                title="Does commute time hurt home-cooking frequency?"
+            )
+        )
+    except Exception:
+        charts.append(
+            px.scatter(
+                df, x="commute_minutes", y="dinners_cooked_per_week",
+                color="city",
+                title="Commute time vs. dinners cooked per week"
+            )
+        )
+
     # 4. Heatmap: dinner hour × health rating
     charts.append(
-        px.density_heatmap(df, x="dinner_time_hour", y="healthy_importance_rating",
-                           nbinsx=24, title="Dinner hour vs. health-importance score")
+        px.density_heatmap(
+            df, x="dinner_time_hour", y="healthy_importance_rating",
+            nbinsx=24, title="Dinner hour vs. health-importance score"
+        )
     )
+
     # 5. Sunburst: city → favourite cuisines
     charts.append(
-        px.sunburst(df, path=["city", "favorite_cuisines"], values="income_inr",
-                    title="What cuisines dominate each city’s income?")
+        px.sunburst(
+            df, path=["city", "favorite_cuisines"], values="income_inr",
+            title="What cuisines dominate each city’s income?"
+        )
     )
+
     # 6. Treemap: dietary goals → meal type preference
     charts.append(
-        px.treemap(df, path=["dietary_goals", "meal_type_pref"], values="income_inr",
-                   title="Diet goals vs. preferred meal type")
+        px.treemap(
+            df, path=["dietary_goals", "meal_type_pref"], values="income_inr",
+            title="Diet goals vs. preferred meal type"
+        )
     )
+
     # 7. Violin: outside orders per week by gender
     charts.append(
-        px.violin(df, y="orders_outside_per_week", x="gender", color="gender", box=True,
-                  title="Outside-order frequency by gender")
+        px.violin(
+            df, y="orders_outside_per_week", x="gender", color="gender", box=True,
+            title="Outside-order frequency by gender"
+        )
     )
-    # 8. Parallel categories: diet → cuisine → meal type → cook role
+
+    # 8. Parallel categories
     charts.append(
-        px.parallel_categories(df[[
-            "dietary_goals", "favorite_cuisines", "meal_type_pref", "primary_cook"
-        ]], title="Diet → cuisine → meal-type → primary cook role")
+        px.parallel_categories(
+            df[["dietary_goals", "favorite_cuisines", "meal_type_pref", "primary_cook"]],
+            title="Diet → cuisine → meal-type → cook role"
+        )
     )
-    # 9. Scatter 3-D lifestyle cube
+
+    # 9. 3-D lifestyle cube
     charts.append(
-        px.scatter_3d(df, x="work_hours_per_day", y="commute_minutes", z="dinners_cooked_per_week",
-                      color="dietary_goals", title="Lifestyle cube: work × commute × cooking")
+        px.scatter_3d(
+            df, x="work_hours_per_day", y="commute_minutes", z="dinners_cooked_per_week",
+            color="dietary_goals", title="Lifestyle cube: work × commute × cooking"
+        )
     )
-    # 10. Radar chart – priority pillars (taste/price/nutrition/ease/time)
+
+    # 10. Radar: priority pillars
     radar_vals = df[[
         "priority_taste", "priority_price", "priority_nutrition",
         "priority_ease", "priority_time"
     ]].mean()
-    radar_fig = go.Figure()
-    radar_fig.add_trace(go.Scatterpolar(
-        r=radar_vals.values, theta=radar_vals.index, fill="toself", name="Priority mean"))
-    radar_fig.update_layout(title="Average priority landscape")
-    charts.append(radar_fig)
-    # 11. Correlation heatmap (numeric cols)
-    corr = df.select_dtypes("number").corr()
+    radar = go.Figure()
+    radar.add_trace(go.Scatterpolar(
+        r=radar_vals.values, theta=radar_vals.index, fill="toself",
+        name="Priority mean"
+    ))
+    radar.update_layout(title="Average priority landscape")
+    charts.append(radar)
+
+    # 11. Correlation heatmap
     charts.append(
-        px.imshow(corr, text_auto=".2f", aspect="auto", title="Numeric-feature correlation heatmap")
+        px.imshow(
+            df.select_dtypes("number").corr(), text_auto=".2f", aspect="auto",
+            title="Numeric-feature correlation heatmap"
+        )
     )
-    # 12. Boxplot: non-veg frequency by city
+
+    # 12. Non-veg frequency by city
     charts.append(
-        px.box(df, x="city", y="non_veg_freq_per_week", color="city",
-               title="Non-veg meals per week by city")
+        px.box(
+            df, x="city", y="non_veg_freq_per_week", color="city",
+            title="Non-veg meals per week by city"
+        )
     )
-    # 13. Trend: outside spend vs. age
+
+    # 13. Outside spend vs. age trend
     age_bins = pd.cut(df["age"], bins=range(15, 71, 5)).astype(str)
     charts.append(
-        px.line(df.assign(age_bin=age_bins)
-                .groupby("age_bin")["spend_outside_per_meal_inr"].mean().reset_index(),
-                x="age_bin", y="spend_outside_per_meal_inr",
-                title="Outside-meal spend across age cohorts")
+        px.line(
+            df.assign(age_bin=age_bins).groupby("age_bin")["spend_outside_per_meal_inr"].mean().reset_index(),
+            x="age_bin", y="spend_outside_per_meal_inr",
+            title="Outside-meal spend across age cohorts"
+        )
     )
-    # 14. Histogram: healthy importance by gender
+
+    # 14. Health-importance distribution by gender
     charts.append(
-        px.histogram(df, x="healthy_importance_rating", color="gender", barmode="overlay",
-                     title="Health-importance score distribution by gender")
+        px.histogram(
+            df, x="healthy_importance_rating", color="gender", barmode="overlay",
+            title="Health-importance score distribution by gender"
+        )
     )
-    # 15. Scatter: cooking skill vs. enjoyment
+
+    # 15. Cooking skill vs. enjoyment
     charts.append(
-        px.scatter(df, x="cooking_skill_rating", y="enjoy_cooking", size="income_inr",
-                   color="gender", title="Does skill drive enjoyment?")
+        px.scatter(
+            df, x="cooking_skill_rating", y="enjoy_cooking",
+            size="income_inr", color="gender",
+            title="Does skill drive enjoyment?"
+        )
     )
+
     # 16. Stacked bar: payment mode vs. city
     charts.append(
-        px.histogram(df, x="payment_mode", color="city", barmode="stack",
-                     title="Preferred payment mode by city")
+        px.histogram(
+            df, x="payment_mode", color="city", barmode="stack",
+            title="Preferred payment mode by city"
+        )
     )
-    # 17. Funnel-like bar: incentive preferences
+
+    # 17. Incentive preference counts
     inc_cnt = df["incentive_pref"].value_counts().reset_index()
     charts.append(
-        px.bar(inc_cnt, x="index", y="incentive_pref", orientation="v",
-               title="What incentives resonate most?")
+        px.bar(
+            inc_cnt, x="index", y="incentive_pref",
+            title="What incentives resonate most?"
+        )
     )
-    # 18. Area chart: cumulative willing-to-pay across age
+
+    # 18. Cumulative willing-to-pay across age
     cum_df = df.sort_values("age").assign(
         cum_wtp=df["willing_to_pay_mealkit_inr"].cumsum()
     )
     charts.append(
-        px.area(cum_df, x="age", y="cum_wtp",
-                title="Cumulative meal-kit willingness-to-pay by age")
+        px.area(
+            cum_df, x="age", y="cum_wtp",
+            title="Cumulative meal-kit willingness-to-pay by age"
+        )
     )
-    # 19. Distribution: commute minutes (animated by city)
+
+    # 19. Commute distribution animation
     charts.append(
-        px.histogram(df, x="commute_minutes", color="city", nbins=40,
-                     animation_frame="city", title="Commute-time distribution by city (animated)")
+        px.histogram(
+            df, x="commute_minutes", color="city", nbins=40,
+            animation_frame="city",
+            title="Commute-time distribution by city (animated)"
+        )
     )
-    # 20. Scatter matrix (pair plot) – selected quantitative fields
+
+    # 20. Scatter-matrix of key numerics
     charts.append(
         px.scatter_matrix(
-            df,
-            dimensions=["age", "income_inr", "commute_minutes", "work_hours_per_day"],
-            color="gender",
-            title="Scatter-matrix of key numeric variables"
+            df, dimensions=[
+                "age", "income_inr", "commute_minutes", "work_hours_per_day"
+            ],
+            color="gender", title="Scatter-matrix of core numeric variables"
         )
     )
 
@@ -258,16 +326,18 @@ with tab_exp:
     for idx, fig in enumerate(charts, 1):
         col = st.columns(3)[(idx - 1) % 3]
         with col:
-            st.markdown(f"**Insight {idx}** – {fig.layout.title.text[:50]}&hellip;")
+            st.markdown(
+                f"**Insight {idx}:** {fig.layout.title.text[:50]}…"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     # ---------- Business takeaways ----------
     with st.expander("💡 Business Takeaways"):
         st.write(
-            "- Younger commuters have the lowest weekly home-cooking rates.\n"
-            "- Mediterranean & South-Indian dominate high-health-rating segments.\n"
+            "- Younger commuters show the sharpest drop in home-cooked dinners.\n"
+            "- Mediterranean & South-Indian dominate high-health segments.\n"
             "- ‘Time-poor diners’ cluster around 10-hour workdays and long commutes.\n"
-            "- Offers bundling low-carb kits with protein add-ons could unlock ₹10-15 crore."
+            "- Bundling low-carb kits with protein add-ons could unlock ₹10-15 crore."
         )
 
 
