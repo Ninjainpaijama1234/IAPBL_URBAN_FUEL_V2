@@ -335,8 +335,173 @@ with tab_exp:
 
 
 
+# ─────────────────────────────────────────────────────────────
+# Stage 3 – Supervised Classification Suite
+# Place this inside the `with tab_cls:` block
+# ─────────────────────────────────────────────────────────────
 with tab_cls:
-    st.info("**Classification suite will arrive in Stage 3.**")
+    import plotly.graph_objects as go
+    from sklearn import metrics
+    from sklearn.compose import ColumnTransformer
+    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+    from sklearn.impute import SimpleImputer
+    from sklearn.metrics import ConfusionMatrixDisplay, f1_score, precision_score, recall_score
+    from sklearn.model_selection import train_test_split
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    from sklearn.tree import DecisionTreeClassifier
+    import pandas as pd
+
+    st.subheader("Supervised Classification")
+
+    # ---------- helper definitions (idempotent) ----------
+    if "build_pipe" not in globals():
+
+        def build_pipe(est, num_cols, cat_cols) -> Pipeline:  # noqa: D401
+            """Preprocess numeric & categorical columns then fit estimator."""
+            pre = ColumnTransformer(
+                [
+                    (
+                        "num",
+                        Pipeline(
+                            [("imp", SimpleImputer(strategy="median")),
+                             ("sc", StandardScaler())]
+                        ),
+                        num_cols,
+                    ),
+                    (
+                        "cat",
+                        Pipeline(
+                            [("imp", SimpleImputer(strategy="most_frequent")),
+                             ("ohe", OneHotEncoder(handle_unknown="ignore"))]
+                        ),
+                        cat_cols,
+                    ),
+                ]
+            )
+            return Pipeline([("prep", pre), ("mdl", est)])
+
+    if "safe_prf" not in globals():
+
+        def safe_prf(y_true, y_pred):
+            """Precision/Recall/F1 with binary→weighted fallback."""
+            if y_true.nunique() == 2:
+                pos = sorted(y_true.unique())[-1]
+                try:
+                    return (
+                        precision_score(y_true, y_pred, pos_label=pos, zero_division=0),
+                        recall_score(y_true, y_pred, pos_label=pos, zero_division=0),
+                        f1_score(y_true, y_pred, pos_label=pos, zero_division=0),
+                    )
+                except ValueError:
+                    pass
+            return (
+                precision_score(y_true, y_pred, average="weighted", zero_division=0),
+                recall_score(y_true, y_pred, average="weighted", zero_division=0),
+                f1_score(y_true, y_pred, average="weighted", zero_division=0),
+            )
+
+    # split helper
+    def split_xy(frame: pd.DataFrame, target: str):
+        y = frame[target]
+        X = frame.drop(columns=[target])
+        num_cols = X.select_dtypes("number").columns.tolist()
+        cat_cols = X.select_dtypes(exclude="number").columns.tolist()
+        return X, y, num_cols, cat_cols
+
+    # ---------- target selection ----------
+    target_col = st.selectbox(
+        "Binary target", ("subscribe_try", "continue_service", "refer_service")
+    )
+
+    if df[target_col].nunique() < 2:
+        st.warning(f"`{target_col}` has only one class after filters; pick another target.")
+        st.stop()
+
+    X, y, num_cols, cat_cols = split_xy(df, target_col)
+
+    stratify_flag = y.value_counts().min() > 1
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X, y, test_size=0.25, random_state=RND, stratify=y if stratify_flag else None
+    )
+
+    # ---------- model zoo ----------
+    k_val = max(1, min(5, len(X_tr)))
+    models = {
+        f"KNN (k={k_val})": build_pipe(KNeighborsClassifier(n_neighbors=k_val), num_cols, cat_cols),
+        "Decision Tree": build_pipe(DecisionTreeClassifier(random_state=RND), num_cols, cat_cols),
+        "Random Forest": build_pipe(RandomForestClassifier(random_state=RND), num_cols, cat_cols),
+        "Gradient Boost": build_pipe(GradientBoostingClassifier(random_state=RND), num_cols, cat_cols),
+    }
+
+    # ---------- train & evaluate ----------
+    rows = []
+    roc = go.Figure()
+    for name, pipe in models.items():
+        pipe.fit(X_tr, y_tr)
+        y_pred = pipe.predict(X_te)
+        try:
+            y_prob = pipe.predict_proba(X_te)
+        except Exception:
+            y_prob = None
+
+        pr, rc, f1 = safe_prf(y_te, y_pred)
+        auc_val = (
+            metrics.roc_auc_score(y_te, y_prob[:, 1])
+            if y_prob is not None and y_prob.shape[1] == 2 and y_te.nunique() == 2
+            else float("nan")
+        )
+        rows.append(
+            {
+                "Model": name,
+                "Accuracy": metrics.accuracy_score(y_te, y_pred),
+                "Precision": pr,
+                "Recall": rc,
+                "F1": f1,
+                "AUC": auc_val,
+            }
+        )
+
+        # ROC overlay
+        if y_prob is not None and y_prob.shape[1] == 2 and y_te.nunique() == 2:
+            fpr, tpr, _ = metrics.roc_curve(y_te, y_prob[:, 1],
+                                            pos_label=sorted(pipe["mdl"].classes_)[-1])
+            roc.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=name))
+
+    st.dataframe(pd.DataFrame(rows).set_index("Model").round(3))
+
+    if roc.data:
+        roc.update_layout(title="ROC curves (test set)", height=400, xaxis_title="FPR",
+                          yaxis_title="TPR", margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(roc, use_container_width=True)
+    else:
+        st.info("ROC curves unavailable (non-binary target or classifiers lack predict_proba).")
+
+    # ---------- Confusion matrix ----------
+    sel_model = st.selectbox("Show confusion matrix for:", list(models))
+    try:
+        cm_fig = ConfusionMatrixDisplay.from_predictions(
+            y_te, models[sel_model].predict(X_te)
+        ).figure_
+        st.pyplot(cm_fig)
+    except ValueError:
+        st.info("Confusion matrix unavailable (test split has single class).")
+
+    # ---------- Batch prediction ----------
+    st.markdown("### Batch Prediction")
+    upl = st.file_uploader("Upload CSV without target column", type="csv")
+    if upl is not None:
+        try:
+            new_df = pd.read_csv(upl)
+            preds = models[sel_model].predict(new_df)
+            new_df[f"pred_{target_col}"] = preds
+            buffer = new_df.to_csv(index=False).encode("utf-8")
+            st.download_button("Download predictions CSV", buffer, "predictions.csv")
+            st.success("Predictions generated!")
+        except Exception as e:
+            st.error(f"❌ Prediction failed: {e}")
+
 
 with tab_clu:
     st.info("**Clustering lab will be delivered in Stage 4.**")
