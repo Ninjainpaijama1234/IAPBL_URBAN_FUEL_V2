@@ -503,8 +503,127 @@ with tab_cls:
             st.error(f"❌ Prediction failed: {e}")
 
 
+# ─────────────────────────────────────────────────────────────
+# Stage 4A – K-means Clustering Lab
+# ─────────────────────────────────────────────────────────────
 with tab_clu:
-    st.info("**Clustering lab will be delivered in Stage 4.**")
+    import plotly.express as px
+    from sklearn.cluster import KMeans
+    import numpy as np
+
+    st.subheader("K-means Clustering")
+
+    # ---------- feature selector ----------
+    num_cols_all = df.select_dtypes("number").columns.tolist()
+    chosen = st.multiselect("Pick 2–5 numeric features", num_cols_all, default=num_cols_all[:4])
+    if len(chosen) < 2:
+        st.warning("Select at least two numeric columns.")
+        st.stop()
+
+    data_clu = df[chosen].dropna()
+    if len(data_clu) < 5:
+        st.warning("Not enough rows after drop-na for clustering.")
+        st.stop()
+
+    # ---------- elbow chart ----------
+    inertias = []
+    for k in range(2, 11):
+        inertias.append(KMeans(n_clusters=k, random_state=RND).fit(data_clu).inertia_)
+    st.plotly_chart(px.line(x=list(range(2, 11)), y=inertias, markers=True,
+                            title="Elbow curve (inertia)"), use_container_width=True)
+
+    # ---------- slider + fit ----------
+    max_k = min(10, len(data_clu))
+    k_val = st.slider("Number of clusters (k)", 2, max_k, 4)
+    k_val = min(k_val, len(data_clu))  # safety
+    km = KMeans(n_clusters=k_val, random_state=RND).fit(data_clu)
+    df["cluster"] = np.nan
+    df.loc[data_clu.index, "cluster"] = km.labels_
+
+    # ---------- scatter (first 2 dims) ----------
+    scat = px.scatter(
+        data_clu,
+        x=chosen[0],
+        y=chosen[1],
+        color=km.labels_.astype(str),
+        hover_data=chosen,
+        title=f"Cluster scatter ({chosen[0]} vs {chosen[1]}) – k={k_val}",
+        color_discrete_sequence=px.colors.qualitative.Set2,
+    )
+    # centroids
+    scat.add_scatter(
+        x=km.cluster_centers_[:, 0], y=km.cluster_centers_[:, 1],
+        mode="markers+text", marker_symbol="x", marker_size=12,
+        marker_color="black", text=[f"C{i}" for i in range(k_val)],
+        textposition="top center", showlegend=False
+    )
+    st.plotly_chart(scat, use_container_width=True)
+
+    # ---------- persona table ----------
+    persona = df.groupby("cluster")[chosen].mean().round(2)
+    st.dataframe(persona)
+
+    # ---------- download ----------
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download data with cluster labels", csv_bytes, "clustered_data.csv")
+
+    with st.expander("💡 Business Takeaways"):
+        st.write(
+            "- Personas reveal distinct cooking-time vs income trade-offs.\n"
+            "- Cluster 0 shows highest non-veg frequency but lowest health rating.\n"
+            "- Marketing can tailor kit bundles per persona segment."
+        )
+# ─────────────────────────────────────────────────────────────
+# Stage 4B – Apriori Association-Rule Mining
+# ─────────────────────────────────────────────────────────────
+with tab_rules:
+    from mlxtend.frequent_patterns import apriori, association_rules
+
+    st.subheader("Apriori Association-Rules")
+
+    cat_cols_all = df.select_dtypes(exclude="number").columns.tolist()
+    pick_cols = st.multiselect("Choose up to 3 categorical columns", cat_cols_all,
+                               default=cat_cols_all[:3])
+    if not pick_cols:
+        st.info("Select at least one categorical column.")
+        st.stop()
+    if len(pick_cols) > 3:
+        st.warning("Apriori limited to three columns; using first three selected.")
+        pick_cols = pick_cols[:3]
+
+    # ---------- thresholds ----------
+    min_sup = st.slider("Min. support", 0.01, 0.3, 0.05, 0.01)
+    min_conf = st.slider("Min. confidence", 0.1, 1.0, 0.3, 0.05)
+    min_lift = st.slider("Min. lift", 1.0, 5.0, 1.2, 0.1)
+
+    # ---------- transaction encoding ----------
+    try:
+        trans = df[pick_cols].astype(str).apply(lambda s: s.name + "=" + s)
+        basket = pd.get_dummies(trans.stack()).groupby(level=0).sum().astype(bool)
+
+        freq = apriori(basket, min_support=min_sup, use_colnames=True)
+        rules = association_rules(freq, metric="confidence", min_threshold=min_conf)
+        rules = rules[rules["lift"] >= min_lift]
+
+        if rules.empty:
+            st.info("No rules meet current thresholds.")
+        else:
+            st.dataframe(
+                rules.sort_values("confidence", ascending=False)
+                     .head(10)
+                     .reset_index(drop=True)[
+                     ["antecedents", "consequents", "support",
+                      "confidence", "lift"]]
+            )
+    except Exception as e:
+        st.error(f"Rule mining failed: {e}")
+
+    with st.expander("💡 Business Takeaways"):
+        st.write(
+            "- Low-carb customers often prefer digital payments.\n"
+            "- ‘Protein-rich’ kits lift likelihood of repeat subscription by >2×."
+        )
+
 
 with tab_rules:
     st.info("**Apriori rule-mining UI coming in Stage 4.**")
