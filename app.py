@@ -1,15 +1,14 @@
 """
 Urban Fuel – Consumer Intelligence Hub
-All-Plotly Streamlit dashboard (error-free edition, no unhashable caching).
-------------------------------------------------------------------------
+Fully-hardened Streamlit dashboard (all-Plotly).
+
 Tabs
-1. 📊  Data Visualisation          – 15 interactive charts + KPIs
-2. 🤖  Classification              – KNN, DT, RF, GB  (+ ROC / CM)
-3. 🧩  Clustering                  – K-means elbow + persona explorer
-4. 🔗  Association Rules           – Apriori explorer
-5. 📈  Regression / Impact         – 4 regressors + feature importance
-6. ⏳  12-Month Revenue Forecast   – RF or ARIMA by city
-------------------------------------------------------------------------
+1. 📊 Data Visualisation          – 15 interactive charts + KPIs
+2. 🤖 Classification              – KNN, DT, RF, GB (+ ROC / CM)
+3. 🧩 Clustering                  – K-means elbow + personas
+4. 🔗 Association Rules           – Apriori explorer
+5. 📈 Regression / Impact         – 4 regressors + feature importances
+6. ⏳ 12-Month Revenue Forecast   – RF or ARIMA by city
 """
 
 from __future__ import annotations
@@ -130,7 +129,6 @@ def revenue_series(df_: pd.DataFrame) -> pd.Series:
 
 # ─────────────────────── STREAMLIT UI ───────────────────────
 st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide")
-
 df_raw = load_data()
 
 # ---------- SIDEBAR ----------
@@ -221,11 +219,17 @@ with tab_clf:
 
     test_size = st.slider("Test size", 0.1, 0.4, 0.2, 0.05)
     X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=test_size, random_state=RANDOM_STATE, stratify=y if strat_ok else None
+        X,
+        y,
+        test_size=test_size,
+        random_state=RANDOM_STATE,
+        stratify=y if strat_ok else None,
     )
 
+    # Dynamic K for K-NN
+    knn_k = max(1, min(5, len(X_tr)))
     algos = {
-        "K-NN": KNeighborsClassifier(),
+        f"K-NN (k={knn_k})": KNeighborsClassifier(n_neighbors=knn_k),
         "Decision Tree": DecisionTreeClassifier(random_state=RANDOM_STATE),
         "Random Forest": RandomForestClassifier(random_state=RANDOM_STATE),
         "Gradient Boost": GradientBoostingClassifier(random_state=RANDOM_STATE),
@@ -240,8 +244,9 @@ with tab_clf:
         y_pred = pipe.predict(X_te)
         try:
             y_prob = pipe.predict_proba(X_te)
-        except AttributeError:
+        except (AttributeError, ValueError):
             y_prob = None
+
         results[name] = {
             "model": pipe,
             "y_pred": y_pred,
@@ -262,10 +267,12 @@ with tab_clf:
         st.plotly_chart(roc_fig.update_layout(xaxis_title="FPR", yaxis_title="TPR"), use_container_width=True)
 
     sel = st.selectbox("Confusion matrix for:", list(results.keys()))
-    cm_fig = ConfusionMatrixDisplay.from_predictions(y_te, results[sel]["y_pred"]).figure_
+    cm_fig = ConfusionMatrixDisplay.from_predictions(
+        y_te, results[sel]["y_pred"], labels=np.unique(y_te)
+    ).figure_
     st.pyplot(cm_fig)
 
-    # Batch prediction
+    # ---------- Batch prediction ----------
     st.markdown("---")
     st.subheader("Batch Prediction")
     upl = st.file_uploader("Upload CSV (no target)", type="csv")
