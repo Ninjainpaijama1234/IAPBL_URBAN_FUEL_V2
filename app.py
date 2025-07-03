@@ -41,6 +41,8 @@ st.set_page_config(
 # ───────────────────────────── Constants ────────────────────────
 DATA_PATH = Path("UrbanFuelSynthetic3000.csv")
 RND = 42  # random seed
+df_raw = load_data(version=2)          # bump to 2 to kill old cache
+st.sidebar.write(f"DEBUG rows: {len(df_raw)}")   # <— new line
 
 # ─────────────────────── Helper functions ───────────────────────
 import numpy as np   # ← add once near your other imports (skip if already present)
