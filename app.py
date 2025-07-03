@@ -39,7 +39,7 @@ st.set_page_config(
 )
 
 # ───────────────────────────── Constants ────────────────────────
-DATA_PATH = Path("UrbanFuelSyntheticSurvey_CLEAN.csv")
+DATA_PATH = Path("UrbanFuelSynthetic3000.csv")
 RND = 42  # random seed
 
 # ─────────────────────── Helper functions ───────────────────────
