@@ -43,18 +43,39 @@ DATA_PATH = Path("UrbanFuelSyntheticSurvey (1).csv")
 RND = 42  # random seed
 
 # ─────────────────────── Helper functions ───────────────────────
+import numpy as np   # ← add once near your other imports (skip if already present)
+
+# ── Revised loader that cleans commas/₹ and keeps blank incomes ──────────────
 @st.cache_data(show_spinner="📂 Loading survey…")
 def load_data() -> pd.DataFrame:
-    """Read CSV, clean headers, coerce numeric‐strings to numbers."""
+    """Read CSV, clean headers, and coerce income to numeric safely."""
     df = pd.read_csv(DATA_PATH, encoding="utf-8")
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-    numeric_objs = [
-        c
-        for c in df.select_dtypes("object").columns
-        if df[c].str.replace(".", "", 1).str.isnumeric().all()
-    ]
-    df[numeric_objs] = df[numeric_objs].apply(pd.to_numeric, errors="coerce")
+    df.columns = (
+        df.columns.str.strip()
+                  .str.lower()
+                  .str.replace(" ", "_")
+    )
+
+    # --- clean income column (commas, rupee sign, blanks) ---
+    if "income_inr" in df.columns:
+        df["income_inr"] = (
+            df["income_inr"]
+            .astype(str)
+            .str.replace(r"[₹,]", "", regex=True)  # remove ₹ and commas
+            .str.strip()
+            .replace("", np.nan)
+            .astype(float)
+        )
+
+    # --- convert any other all-numeric string columns to numbers ---
+    for col in df.select_dtypes("object").columns:
+        if col == "income_inr":
+            continue
+        if df[col].str.replace(r"[.\-]", "", regex=True).str.isnumeric().all():
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     return df
+
 
 
 def fmt_inr(x) -> str:
