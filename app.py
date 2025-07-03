@@ -99,7 +99,7 @@ if sel_city:
     df = df[df["city"].isin(sel_city)]
 if sel_gender:
     df = df[df["gender"].isin(sel_gender)]
-df = df[df["income_inr"].between(*sel_inc)]
+df = df[(df["income_inr"].isna()) | df["income_inr"].between(*sel_inc)]
 if sel_diet:
     df = df[df["dietary_goals"].isin(sel_diet)]
 
