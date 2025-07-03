@@ -40,7 +40,7 @@ st.set_page_config(
 
 # ───────────────────────────── Constants ────────────────────────
 DATA_PATH = Path("UrbanFuelSynthetic3000.csv")
-df_raw = load_data(version=2)
+
 st.sidebar.write(f"DEBUG rows: {len(df_raw)}")   # <— new line
 RND = 42  # random seed
 
