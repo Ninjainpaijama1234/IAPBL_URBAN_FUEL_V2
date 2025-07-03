@@ -47,7 +47,7 @@ import numpy as np   # ← add once near your other imports (skip if already pre
 
 # ── Revised loader that cleans commas/₹ and keeps blank incomes ──────────────
 @st.cache_data(show_spinner="📂 Loading survey…")
-def load_data() -> pd.DataFrame:
+def load_data(version: int = 1) -> pd.DataFrame:
     """Read CSV, clean headers, and coerce income to numeric safely."""
     df = pd.read_csv(DATA_PATH, encoding="utf-8")
     df.columns = (
